@@ -1,0 +1,485 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <interface name="ScyColorWheels" label="Color Wheels" icon="COP_color" showNetworkNavigationBar="false" help_url="">
+    <script><![CDATA[
+import math
+import hou
+from hutil.Qt import QtCore, QtGui, QtWidgets
+
+
+class ColorWheel(QtWidgets.QWidget):
+    valueChanged = QtCore.Signal(float, float)
+
+    def __init__(self):
+        super().__init__()
+        self._x = 0.0
+        self._y = 0.0
+        self._dragging = False
+        self.setMinimumSize(220, 220)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.setToolTip("Drag to push the whole image toward a hue. Double-click to reset.")
+
+    def setValue(self, x, y):
+        self._x = float(x)
+        self._y = float(y)
+        self.update()
+
+    def _geometry(self):
+        side = min(self.width(), self.height()) - 24.0
+        radius = max(20.0, side * 0.5)
+        return QtCore.QPointF(self.width() * 0.5, self.height() * 0.5), radius
+
+    def _setFromPosition(self, pos):
+        center, radius = self._geometry()
+        dx = (pos.x() - center.x()) / radius
+        dy = (center.y() - pos.y()) / radius
+        length = math.hypot(dx, dy)
+        if length > 1.0:
+            dx /= length
+            dy /= length
+        self._x, self._y = dx, dy
+        self.valueChanged.emit(dx, dy)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._dragging = True
+            self._setFromPosition(event.position())
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            self._setFromPosition(event.position())
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._dragging = False
+
+    def mouseDoubleClickEvent(self, event):
+        self._x = self._y = 0.0
+        self.valueChanged.emit(0.0, 0.0)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        center, radius = self._geometry()
+
+        gradient = QtGui.QConicalGradient(center, 0.0)
+        gradient.setColorAt(0.000, QtGui.QColor.fromHsvF(0.00, 1.0, 1.0))
+        gradient.setColorAt(0.166, QtGui.QColor.fromHsvF(0.83, 1.0, 1.0))
+        gradient.setColorAt(0.333, QtGui.QColor.fromHsvF(0.66, 1.0, 1.0))
+        gradient.setColorAt(0.500, QtGui.QColor.fromHsvF(0.50, 1.0, 1.0))
+        gradient.setColorAt(0.666, QtGui.QColor.fromHsvF(0.33, 1.0, 1.0))
+        gradient.setColorAt(0.833, QtGui.QColor.fromHsvF(0.16, 1.0, 1.0))
+        gradient.setColorAt(1.000, QtGui.QColor.fromHsvF(0.00, 1.0, 1.0))
+
+        ring_pen = QtGui.QPen(QtGui.QBrush(gradient), 13.0)
+        painter.setPen(ring_pen)
+        painter.setBrush(QtGui.QColor(37, 38, 43))
+        painter.drawEllipse(center, radius - 7.0, radius - 7.0)
+
+        painter.setPen(QtGui.QPen(QtGui.QColor(84, 86, 94), 1.0))
+        inner = radius - 15.0
+        painter.drawLine(QtCore.QPointF(center.x() - inner, center.y()), QtCore.QPointF(center.x() + inner, center.y()))
+        painter.drawLine(QtCore.QPointF(center.x(), center.y() - inner), QtCore.QPointF(center.x(), center.y() + inner))
+
+        puck = QtCore.QPointF(center.x() + self._x * inner, center.y() - self._y * inner)
+        painter.setPen(QtGui.QPen(QtGui.QColor(225, 225, 230), 2.0))
+        painter.setBrush(QtGui.QColor(75, 77, 84))
+        painter.drawEllipse(puck, 7.0, 7.0)
+        painter.setBrush(QtGui.QColor(210, 210, 215))
+        painter.drawEllipse(puck, 2.0, 2.0)
+
+
+class NumericSpinBox(QtWidgets.QDoubleSpinBox):
+    """A compact editor that explicitly claims keystrokes from Houdini."""
+
+    def __init__(self):
+        super().__init__()
+        self.setRange(-20.0, 20.0)
+        self.setDecimals(3)
+        self.setSingleStep(0.01)
+        self.setKeyboardTracking(False)
+        self.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
+        self.setAlignment(QtCore.Qt.AlignCenter)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.lineEdit().setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.lineEdit().installEventFilter(self)
+        self.setMinimumWidth(62)
+
+    def mousePressEvent(self, event):
+        # Embedded parameter panes may otherwise keep keyboard focus and
+        # interpret the first typed digit as a Houdini quickmark.
+        super().mousePressEvent(event)
+        QtCore.QTimer.singleShot(0, self._focusEditor)
+
+    def _focusEditor(self, cursor_position=None):
+        editor = self.lineEdit()
+        editor.setFocus(QtCore.Qt.MouseFocusReason)
+        editor.deselect()
+        if cursor_position is not None:
+            editor.setCursorPosition(cursor_position)
+
+    def eventFilter(self, watched, event):
+        if watched is self.lineEdit() and event.type() in (
+                QtCore.QEvent.MouseButtonPress,
+                QtCore.QEvent.MouseButtonDblClick):
+            cursor_position = watched.cursorPositionAt(event.position().toPoint())
+            QtCore.QTimer.singleShot(
+                0, lambda position=cursor_position: self._focusEditor(position))
+            if event.type() == QtCore.QEvent.MouseButtonDblClick:
+                # Prevent QLineEdit's word selection (for example, selecting
+                # only the fractional zeros in a value such as 0.000).
+                return True
+        return super().eventFilter(watched, event)
+
+    def event(self, event):
+        if event.type() == QtCore.QEvent.ShortcutOverride:
+            event.accept()
+            return True
+        return super().event(event)
+
+
+class RelativeExposureBar(QtWidgets.QWidget):
+    valueChanged = QtCore.Signal(float)
+
+    def __init__(self):
+        super().__init__()
+        self._value = 0.0
+        self._last_x = 0.0
+        self._dragging = False
+        self.setFixedHeight(27)
+        self.setCursor(QtCore.Qt.SizeHorCursor)
+        self.setToolTip("Drag left/right for relative exposure. Shift-drag for fine control. Double-click to reset.")
+
+    def setValue(self, value):
+        self._value = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._dragging = True
+            self._last_x = event.position().x()
+
+    def mouseMoveEvent(self, event):
+        if not self._dragging:
+            return
+        current_x = event.position().x()
+        dx = current_x - self._last_x
+        self._last_x = current_x
+        sensitivity = 0.002 if event.modifiers() & QtCore.Qt.ShiftModifier else 0.01
+        self._value += dx * sensitivity
+        self.valueChanged.emit(self._value)
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self._dragging = False
+
+    def mouseDoubleClickEvent(self, event):
+        self._value = 0.0
+        self.valueChanged.emit(0.0)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        rect = self.rect().adjusted(2, 4, -2, -4)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QColor(25, 26, 30))
+        painter.drawRoundedRect(rect, 2.0, 2.0)
+        center = rect.center().x()
+        for i in range(-18, 19):
+            x = center + i * (rect.width() / 38.0)
+            height = 10 if i == 0 else (7 if i % 5 == 0 else 4)
+            color = QtGui.QColor(125, 127, 134) if i == 0 else QtGui.QColor(65, 67, 73)
+            painter.setPen(QtGui.QPen(color, 1.0))
+            painter.drawLine(QtCore.QPointF(x, rect.center().y() - height * 0.5),
+                             QtCore.QPointF(x, rect.center().y() + height * 0.5))
+        painter.setPen(QtGui.QColor(190, 192, 198))
+        painter.drawText(rect, QtCore.Qt.AlignCenter, f"{self._value:+.3f} stops")
+
+
+class OffsetPanel(QtWidgets.QWidget):
+    def __init__(self, title_text="Offset", show_y=False):
+        super().__init__()
+        self._node = None
+        self._updating = False
+
+        self.wheel = ColorWheel()
+        self.wheel.valueChanged.connect(self._wheelChanged)
+
+        self.exposure_drag = RelativeExposureBar()
+        self.exposure_drag.valueChanged.connect(self._exposureChanged)
+
+        self.range_slider = QtWidgets.QSlider(QtCore.Qt.Vertical)
+        self.range_slider.setRange(0, 4000)
+        self.range_slider.setValue(1000)
+        self.range_slider.setSingleStep(10)
+        self.range_slider.setPageStep(100)
+        self.range_slider.setFixedWidth(24)
+        self.range_slider.setToolTip("Wheel Range in stops")
+        self.range_slider.valueChanged.connect(self._strengthChanged)
+
+        self.range_label = QtWidgets.QLabel("1.00")
+        self.range_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.range_label.setToolTip("Wheel Range in stops")
+
+        reset = QtWidgets.QToolButton()
+        reset.setIcon(hou.qt.Icon("BUTTONS_revert"))
+        reset.setIconSize(QtCore.QSize(14, 14))
+        reset.setFixedSize(22, 22)
+        reset.setStyleSheet("QToolButton { background: #34353b; border: 1px solid #55575f; border-radius: 3px; } QToolButton:hover { background: #484a52; }")
+        reset.setToolTip("Reset wheel and exposure")
+        reset.clicked.connect(self._reset)
+
+        self.rgb = []
+        rgb_layout = QtWidgets.QHBoxLayout()
+        rgb_layout.setSpacing(5)
+        self.master_editor = None
+        if show_y:
+            self.master_editor = NumericSpinBox()
+            self.master_editor.setToolTip("Master Y adjustment in stops")
+            self.master_editor.editingFinished.connect(self._masterNumericChanged)
+            column = QtWidgets.QVBoxLayout()
+            column.setSpacing(1)
+            column.addWidget(self.master_editor)
+            label = QtWidgets.QLabel("Y")
+            label.setAlignment(QtCore.Qt.AlignCenter)
+            label.setStyleSheet("color: #8c8e96;")
+            column.addWidget(label)
+            rgb_layout.addLayout(column)
+        for index, name in enumerate(("R", "G", "B")):
+            editor = NumericSpinBox()
+            editor.setToolTip(f"{name} channel offset in stops")
+            editor.editingFinished.connect(
+                lambda i=index, e=editor: self._rgbChanged(i, e.value()))
+            self.rgb.append(editor)
+            column = QtWidgets.QVBoxLayout()
+            column.setSpacing(1)
+            column.addWidget(editor)
+            label = QtWidgets.QLabel(name)
+            label.setAlignment(QtCore.Qt.AlignCenter)
+            label.setStyleSheet("color: #8c8e96;")
+            column.addWidget(label)
+            rgb_layout.addLayout(column)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(4)
+        header = QtWidgets.QHBoxLayout()
+        header.addStretch(1)
+        title = QtWidgets.QLabel(title_text)
+        title.setAlignment(QtCore.Qt.AlignCenter)
+        title.setStyleSheet("font-weight: 600;")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(reset)
+        layout.addLayout(header)
+
+        wheel_row = QtWidgets.QHBoxLayout()
+        wheel_row.setSpacing(4)
+        wheel_row.addWidget(self.wheel, 1)
+        range_column = QtWidgets.QVBoxLayout()
+        range_column.setSpacing(1)
+        range_column.addWidget(self.range_slider, 1, QtCore.Qt.AlignHCenter)
+        range_column.addWidget(self.range_label)
+        wheel_row.addLayout(range_column)
+        layout.addLayout(wheel_row, 1)
+        layout.addWidget(self.exposure_drag)
+        layout.addLayout(rgb_layout)
+
+    def setNode(self, node):
+        self._node = node
+        self._syncFromNode()
+
+    def _valid(self):
+        if self._node is None:
+            return False
+        try:
+            # Accessing a deleted HOM node raises hou.ObjectWasDeleted.
+            self._node.type()
+            return True
+        except hou.ObjectWasDeleted:
+            return False
+
+    def _syncFromNode(self):
+        if not self._valid():
+            return
+        self._updating = True
+        try:
+            x = self._node.evalParm("wheel_x")
+            y = self._node.evalParm("wheel_y")
+            exposure = self._node.evalParm("exposure")
+            strength = self._node.evalParm("color_strength")
+            self.wheel.setValue(x, y)
+            self.exposure_drag.setValue(exposure)
+            if self.master_editor is not None:
+                self.master_editor.setValue(exposure)
+            self.range_slider.setValue(round(strength * 1000.0))
+            self.range_label.setText(f"{strength:.2f}")
+            self._setRgbEditors(*self._channelStops(x, y, exposure, strength))
+        finally:
+            self._updating = False
+
+    @staticmethod
+    def _channelStops(x, y, exposure, strength):
+        return (
+            exposure + strength * x,
+            exposure + strength * (-0.5 * x - 0.8660254 * y),
+            exposure + strength * (-0.5 * x + 0.8660254 * y),
+        )
+
+    def _setRgbEditors(self, r, g, b):
+        for editor, value in zip(self.rgb, (r, g, b)):
+            editor.setValue(value)
+
+    def _refreshDisplays(self):
+        if not self._valid():
+            return
+        self._updating = True
+        try:
+            x = self._node.evalParm("wheel_x")
+            y = self._node.evalParm("wheel_y")
+            exposure = self._node.evalParm("exposure")
+            strength = self._node.evalParm("color_strength")
+            self.exposure_drag.setValue(exposure)
+            if self.master_editor is not None:
+                self.master_editor.setValue(exposure)
+            self.range_label.setText(f"{strength:.2f}")
+            self._setRgbEditors(*self._channelStops(x, y, exposure, strength))
+        finally:
+            self._updating = False
+
+    def _wheelChanged(self, x, y):
+        if self._updating or not self._valid():
+            return
+        with hou.undos.group("Adjust Log Offset Wheel"):
+            self._node.parm("wheel_x").set(x)
+            self._node.parm("wheel_y").set(y)
+        self._refreshDisplays()
+
+    def _exposureChanged(self, value):
+        if not self._updating and self._valid():
+            with hou.undos.group("Adjust Log Offset Exposure"):
+                self._node.parm("exposure").set(value)
+            self._refreshDisplays()
+
+    def _strengthChanged(self, value):
+        if not self._updating and self._valid():
+            strength = value / 1000.0
+            with hou.undos.group("Adjust Log Offset Strength"):
+                self._node.parm("color_strength").set(strength)
+            self._refreshDisplays()
+
+    def _masterNumericChanged(self):
+        if self._updating or not self._valid():
+            return
+        self._exposureChanged(self.master_editor.value())
+
+    def _rgbChanged(self, index, value):
+        if self._updating or not self._valid():
+            return
+        stops = [editor.value() for editor in self.rgb]
+        stops[index] = value
+        r, g, b = stops
+        exposure = (r + g + b) / 3.0
+        strength = self._node.evalParm("color_strength")
+        if strength > 1e-8:
+            x = (r - exposure) / strength
+            y = (b - g) / (1.7320508 * strength)
+            radius = math.hypot(x, y)
+            if radius > 1.0:
+                x /= radius
+                y /= radius
+        else:
+            x = y = 0.0
+        with hou.undos.group("Edit Log Offset Channels"):
+            self._node.parm("exposure").set(exposure)
+            self._node.parm("wheel_x").set(x)
+            self._node.parm("wheel_y").set(y)
+        self.wheel.setValue(x, y)
+        self._refreshDisplays()
+
+    def _reset(self):
+        if not self._valid():
+            return
+        with hou.undos.group("Reset Log Offset Wheel"):
+            self._node.parm("wheel_x").set(0.0)
+            self._node.parm("wheel_y").set(0.0)
+            self._node.parm("exposure").set(0.0)
+            self._node.parm("color_strength").set(1.0)
+        self._syncFromNode()
+
+
+class NodeParmProxy:
+    def __init__(self, node, mapping):
+        self._node = node
+        self._mapping = mapping
+    def type(self):
+        return self._node.type()
+    def parm(self, name):
+        return self._node.parm(self._mapping.get(name, name))
+    def evalParm(self, name):
+        return self._node.evalParm(self._mapping.get(name, name))
+
+
+class FullPrimariesPanel(QtWidgets.QWidget):
+    def __init__(self):
+        super().__init__()
+        self.sections = []
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(2, 2, 2, 2)
+        row.setSpacing(2)
+        for prefix, title, show_y in (
+                ('lift', 'Lift', True), ('gamma', 'Gamma', True),
+                ('gain', 'Gain', True), ('offset', 'Offset', False)):
+            section = OffsetPanel(title, show_y)
+            section.setMinimumWidth(230)
+            self.sections.append((prefix, section))
+            row.addWidget(section, 1)
+        body = QtWidgets.QWidget()
+        body.setLayout(row)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(body)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
+
+    def setNode(self, node):
+        if node is None:
+            return
+        for prefix, section in self.sections:
+            if prefix == 'offset':
+                mapping = {}
+            else:
+                mapping = {
+                    'wheel_x': prefix + '_x', 'wheel_y': prefix + '_y',
+                    'exposure': prefix + '_master',
+                    'color_strength': prefix + '_range'}
+            section.setNode(NodeParmProxy(node, mapping))
+
+
+panel = None
+
+def onCreateInterface():
+    global panel
+    panel = FullPrimariesPanel()
+    return panel
+
+def onDestroyInterface():
+    global panel
+    panel = None
+
+def onNodePathChanged(node):
+    if panel is not None:
+        panel.setNode(node)
+    ]]></script>
+    <showInParametersPane optype="Scy::Cop/color_wheels::1.0"/>
+    <help><![CDATA[Scene-linear, stops-based Lift, Gamma, Gain, and Offset color wheels.]]></help>
+  </interface>
+</pythonPanelDocument>
