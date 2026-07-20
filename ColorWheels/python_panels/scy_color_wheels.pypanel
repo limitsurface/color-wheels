@@ -64,7 +64,9 @@ class ColorWheel(QtWidgets.QWidget):
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         center, radius = self._geometry()
 
-        gradient = QtGui.QConicalGradient(center, 0.0)
+        # Resolve-style orientation: blue sits at the lower-right. The
+        # opponent-color transform uses the same 180-degree orientation.
+        gradient = QtGui.QConicalGradient(center, 180.0)
         gradient.setColorAt(0.000, QtGui.QColor.fromHsvF(0.00, 1.0, 1.0))
         gradient.setColorAt(0.166, QtGui.QColor.fromHsvF(0.83, 1.0, 1.0))
         gradient.setColorAt(0.333, QtGui.QColor.fromHsvF(0.66, 1.0, 1.0))
