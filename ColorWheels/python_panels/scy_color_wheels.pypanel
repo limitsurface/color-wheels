@@ -64,15 +64,15 @@ class ColorWheel(QtWidgets.QWidget):
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         center, radius = self._geometry()
 
-        # Resolve-style orientation: blue sits at the lower-right. The
-        # opponent-color transform uses the same 180-degree orientation.
-        gradient = QtGui.QConicalGradient(center, 180.0)
+        # Resolve-style orientation: red upper-left, magenta upper-right,
+        # blue lower-right, green lower-left.
+        gradient = QtGui.QConicalGradient(center, 120.0)
         gradient.setColorAt(0.000, QtGui.QColor.fromHsvF(0.00, 1.0, 1.0))
-        gradient.setColorAt(0.166, QtGui.QColor.fromHsvF(0.83, 1.0, 1.0))
-        gradient.setColorAt(0.333, QtGui.QColor.fromHsvF(0.66, 1.0, 1.0))
+        gradient.setColorAt(0.166, QtGui.QColor.fromHsvF(0.16, 1.0, 1.0))
+        gradient.setColorAt(0.333, QtGui.QColor.fromHsvF(0.33, 1.0, 1.0))
         gradient.setColorAt(0.500, QtGui.QColor.fromHsvF(0.50, 1.0, 1.0))
-        gradient.setColorAt(0.666, QtGui.QColor.fromHsvF(0.33, 1.0, 1.0))
-        gradient.setColorAt(0.833, QtGui.QColor.fromHsvF(0.16, 1.0, 1.0))
+        gradient.setColorAt(0.666, QtGui.QColor.fromHsvF(0.66, 1.0, 1.0))
+        gradient.setColorAt(0.833, QtGui.QColor.fromHsvF(0.83, 1.0, 1.0))
         gradient.setColorAt(1.000, QtGui.QColor.fromHsvF(0.00, 1.0, 1.0))
 
         ring_pen = QtGui.QPen(QtGui.QBrush(gradient), 13.0)
@@ -327,9 +327,9 @@ class OffsetPanel(QtWidgets.QWidget):
     @staticmethod
     def _channelStops(x, y, exposure, strength):
         return (
-            exposure - strength * x,
-            exposure + strength * (0.5 * x + 0.8660254 * y),
-            exposure + strength * (0.5 * x - 0.8660254 * y),
+            exposure + strength * (-0.5 * x + 0.8660254 * y),
+            exposure + strength * (-0.5 * x - 0.8660254 * y),
+            exposure + strength * x,
         )
 
     def _setRgbEditors(self, r, g, b):
@@ -388,8 +388,8 @@ class OffsetPanel(QtWidgets.QWidget):
         exposure = (r + g + b) / 3.0
         strength = self._node.evalParm("color_strength")
         if strength > 1e-8:
-            x = -(r - exposure) / strength
-            y = (g - b) / (1.7320508 * strength)
+            x = (b - exposure) / strength
+            y = (r - g) / (1.7320508 * strength)
             radius = math.hypot(x, y)
             if radius > 1.0:
                 x /= radius
