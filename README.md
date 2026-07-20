@@ -50,7 +50,8 @@ Restart Houdini. The asset appears in Copernicus under
 
 All neutral controls produce an exact passthrough and alpha is left unchanged.
 
-See [Getting Started](docs/getting-started.md) for a short usage tutorial.
+See [Embedding a Python Panel in an HDA Interface](docs/embedding-python-panels.md)
+for a short tutorial on the Houdini 22 functionality used by this asset.
 
 Built by Codex using GPT-5.6-sol (light) and [limitsurface/houdini-cli](https://github.com/limitsurface/houdini-cli).
 Very Beta :)
